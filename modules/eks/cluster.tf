@@ -84,7 +84,39 @@ resource "aws_eks_cluster" "this" {
   depends_on = [
     aws_iam_role_policy_attachment.cluster,
     aws_cloudwatch_log_group.cluster,
+    terraform_data.cluster_sg_cleanup,
   ]
+}
+
+# On destroy: after the cluster is deleted, AWS holds onto the EKS-managed
+# cluster security group for a few minutes. If it's not released by the time
+# Terraform tries to delete the VPC, the VPC deletion hangs. This provisioner
+# waits up to 5 minutes for AWS to release it, then deletes it manually.
+resource "terraform_data" "cluster_sg_cleanup" {
+  input = var.cluster_name
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      CLUSTER_NAME="${self.input}"
+      echo "Waiting for EKS cluster SG to be released by AWS..."
+      ELAPSED=0
+      while [ $ELAPSED -lt 300 ]; do
+        SG_ID=$(aws ec2 describe-security-groups \
+          --filters "Name=tag:aws:eks:cluster-name,Values=$CLUSTER_NAME" \
+          --query 'SecurityGroups[0].GroupId' \
+          --output text 2>/dev/null)
+        if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
+          echo "EKS cluster SG released."
+          exit 0
+        fi
+        sleep 15
+        ELAPSED=$((ELAPSED + 15))
+      done
+      echo "Timed out waiting — deleting EKS cluster SG $SG_ID manually."
+      aws ec2 delete-security-group --group-id $SG_ID 2>/dev/null || true
+    EOT
+  }
 }
 
 ###############################################################################

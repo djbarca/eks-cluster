@@ -25,7 +25,10 @@ resource "helm_release" "karpenter" {
     }
   })]
 
-  depends_on = [aws_eks_pod_identity_association.karpenter]
+  depends_on = [
+    aws_eks_pod_identity_association.karpenter,
+    terraform_data.node_cleanup,
+  ]
 }
 
 ###############################################################################
@@ -54,7 +57,7 @@ resource "kubectl_manifest" "ec2nodeclass" {
     }
   })
 
-  depends_on = [helm_release.karpenter]
+  depends_on = [helm_release.karpenter, terraform_data.node_cleanup]
 }
 
 ###############################################################################
@@ -125,5 +128,5 @@ resource "kubectl_manifest" "nodepool" {
     }
   })
 
-  depends_on = [kubectl_manifest.ec2nodeclass]
+  depends_on = [kubectl_manifest.ec2nodeclass, terraform_data.node_cleanup]
 }

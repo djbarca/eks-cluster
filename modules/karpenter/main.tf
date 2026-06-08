@@ -17,3 +17,34 @@ resource "aws_eks_pod_identity_association" "karpenter" {
   service_account = "karpenter"
   role_arn        = aws_iam_role.karpenter_controller.arn
 }
+
+# On destroy: terminate all Karpenter-provisioned instances before the VPC
+# is cleaned up. Without this, subnet deletion hangs because running instances
+# hold ENIs that prevent subnet deletion.
+#
+# The Helm release and NodePool manifests depend on this resource so that
+# during destroy Karpenter is uninstalled FIRST (preventing re-provisioning),
+# then this provisioner runs and terminates remaining nodes.
+resource "terraform_data" "node_cleanup" {
+  input = var.cluster_name
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      INSTANCES=$(aws ec2 describe-instances \
+        --filters \
+          "Name=tag:karpenter.sh/discovery,Values=${self.input}" \
+          "Name=instance-state-name,Values=running,pending,stopping" \
+        --query 'Reservations[*].Instances[*].InstanceId' \
+        --output text 2>/dev/null | tr '\t' ' ')
+      if [ -n "$INSTANCES" ]; then
+        echo "Terminating Karpenter nodes: $INSTANCES"
+        aws ec2 terminate-instances --instance-ids $INSTANCES
+        aws ec2 wait instance-terminated --instance-ids $INSTANCES
+        echo "All Karpenter nodes terminated."
+      else
+        echo "No Karpenter nodes to terminate."
+      fi
+    EOT
+  }
+}
