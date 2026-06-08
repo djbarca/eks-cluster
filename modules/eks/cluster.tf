@@ -98,6 +98,7 @@ resource "terraform_data" "cluster_sg_cleanup" {
   provisioner "local-exec" {
     when    = destroy
     command = <<-EOT
+      set -euo pipefail
       CLUSTER_NAME="${self.input}"
       echo "Waiting for EKS cluster SG to be released by AWS..."
       ELAPSED=0
@@ -105,7 +106,7 @@ resource "terraform_data" "cluster_sg_cleanup" {
         SG_ID=$(aws ec2 describe-security-groups \
           --filters "Name=tag:aws:eks:cluster-name,Values=$CLUSTER_NAME" \
           --query 'SecurityGroups[0].GroupId' \
-          --output text 2>/dev/null)
+          --output text)
         if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
           echo "EKS cluster SG released."
           exit 0
@@ -114,7 +115,7 @@ resource "terraform_data" "cluster_sg_cleanup" {
         ELAPSED=$((ELAPSED + 15))
       done
       echo "Timed out waiting — deleting EKS cluster SG $SG_ID manually."
-      aws ec2 delete-security-group --group-id $SG_ID 2>/dev/null || true
+      aws ec2 delete-security-group --group-id "$SG_ID"
     EOT
   }
 }

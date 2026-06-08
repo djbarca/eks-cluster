@@ -1,6 +1,7 @@
 locals {
   cluster_name = "test-data-platform"
   vpc_cidr     = "10.1.0.0/16"
+  aws_region   = "us-east-1"
 }
 
 data "aws_availability_zones" "available" {
@@ -112,7 +113,7 @@ module "platform" {
   cluster_endpoint                   = module.eks.cluster_endpoint
   cluster_certificate_authority_data = module.eks.cluster_certificate_authority_data
   vpc_id                             = module.vpc.vpc_id
-  aws_region                         = "us-east-1"
+  aws_region                         = local.aws_region
   grafana_storage_size               = ""
   grafana_admin_password             = var.grafana_admin_password
 

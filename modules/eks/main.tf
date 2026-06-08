@@ -35,3 +35,14 @@ locals {
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
   })
 }
+
+# Fail fast if cluster-admin access entry would be silently skipped:
+# happens when caller is an IAM user (no "assumed-role/" in STS ARN) and
+# no explicit var.admin_role_arn was passed. Without this guard the apply
+# succeeds but nobody can kubectl into the cluster.
+check "admin_principal_resolvable" {
+  assert {
+    condition     = !var.grant_developer_admin || local.admin_principal_arn != null
+    error_message = "grant_developer_admin = true but admin principal could not be resolved. Set var.admin_role_arn explicitly — caller must be an assumed role (SSO/STS) for auto-derivation to work."
+  }
+}

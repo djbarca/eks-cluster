@@ -31,12 +31,13 @@ resource "terraform_data" "node_cleanup" {
   provisioner "local-exec" {
     when    = destroy
     command = <<-EOT
+      set -euo pipefail
       INSTANCES=$(aws ec2 describe-instances \
         --filters \
           "Name=tag:karpenter.sh/discovery,Values=${self.input}" \
           "Name=instance-state-name,Values=running,pending,stopping" \
         --query 'Reservations[*].Instances[*].InstanceId' \
-        --output text 2>/dev/null | tr '\t' ' ')
+        --output text | tr '\t' ' ')
       if [ -n "$INSTANCES" ]; then
         echo "Terminating Karpenter nodes: $INSTANCES"
         aws ec2 terminate-instances --instance-ids $INSTANCES
