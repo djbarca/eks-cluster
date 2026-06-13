@@ -132,16 +132,69 @@ kubectl get nodes
 | `modules/platform` | `enable_fluentbit` | `true` | Fluent Bit → CloudWatch |
 | `modules/spark` | `enable_yunikorn` | `true` | YuniKorn gang scheduler |
 | `modules/spark` | `enable_history_server` | `true` | Spark History Server |
+| `modules/spark` | `job_data_bucket_arns` | `[]` | S3 bucket ARNs for Spark job R/W access via Pod Identity |
 
-`enable_history_server = true` also requires `history_server_bucket` and `history_server_bucket_arn` to be set. Both default to `""` and are ignored when the history server is disabled.
+`enable_history_server = true` also requires `history_server_bucket` and `history_server_bucket_arn`. Both default to `""` and are ignored when the history server is disabled.
+
+`job_data_bucket_arns` controls a separate IAM role bound to the `spark` ServiceAccount via Pod Identity. When non-empty, the driver and executor pods automatically receive credentials with R/W access to each bucket. Include the History Server bucket in this list if jobs need to write event logs.
 
 ---
 
 ## Running Spark jobs
 
-Spark jobs are submitted as `SparkApplication` CRDs via the Spark Operator. To use YuniKorn gang scheduling (recommended for production), set `schedulerName: yunikorn` in the spec. Executor pods land on the Karpenter spark NodePool via the `role=spark:NoSchedule` taint.
+Spark jobs are submitted as `SparkApplication` CRDs via the Spark Operator. Executor pods land on the Karpenter spark NodePool via the `role=spark:NoSchedule` taint.
 
-Spark event logs should be written to the S3 bucket passed as `history_server_bucket` — the Spark History Server reads from there and serves the UI on port 18080.
+### One-time setup
+
+Apply the `spark` ServiceAccount and RBAC the operator needs:
+
+```bash
+kubectl apply -f examples/spark-jobs/spark-sa.yaml
+```
+
+### SparkPi smoke test (no S3 required)
+
+```bash
+kubectl apply -f examples/spark-jobs/pi-job.yaml
+kubectl get sparkapplication -n spark spark-pi -w
+kubectl logs -n spark spark-pi-driver | grep "Pi is roughly"
+```
+
+Expect ~3 minutes — Karpenter provisions a spark node, the driver and 2 executors run, Pi prints.
+
+### S3 read/write job
+
+This validates Pod Identity → S3A, including event-log writes to the History Server bucket.
+
+```bash
+# Upload sample input
+echo -e "the quick brown fox\nthe lazy dog\nthe quick fox" > /tmp/words.txt
+aws s3 cp /tmp/words.txt s3://<your-data-bucket>/input/words.txt
+
+# Edit s3-wordcount-job.yaml to point at your buckets, then:
+kubectl apply -f examples/spark-jobs/s3-wordcount-job.yaml
+kubectl logs -n spark s3-wordcount-driver -f
+
+# View it in the History Server UI
+kubectl port-forward -n spark svc/spark-history-server 18080:18080 &
+open http://localhost:18080
+```
+
+### Spark image gotchas
+
+The `apache/spark:3.5.3` image does NOT ship the S3A jars. The example jobs and the History Server work around this with an `initContainer` that downloads `hadoop-aws` and `aws-java-sdk-bundle` into a shared volume on every pod start. For production, **bake a custom image** with these jars pre-installed — saves ~15s per pod and removes the Maven Central dependency.
+
+The job manifests pin specific versions for known-working Pod Identity support:
+- `hadoop-aws:3.3.4` (matches Spark 3.5.x's hadoop-client)
+- `aws-java-sdk-bundle:1.12.788` — earlier versions reject Pod Identity's link-local credential endpoint
+
+The driver/executor `sparkConf` includes two non-obvious entries:
+- `spark.hadoop.fs.s3a.aws.credentials.provider = org.apache.hadoop.fs.s3a.auth.IAMInstanceCredentialsProvider` — bypasses the default chain that checks env vars first
+- `spark.eventLog.dir = s3a://bucket/logs` — never bare `s3a://bucket/` (S3A treats it as non-absolute and crashes)
+
+### YuniKorn gang scheduling
+
+Add `schedulerName: yunikorn` to the `driver` and `executor` specs in your `SparkApplication`. Critical for production jobs with many executors — guarantees all-or-nothing scheduling so partial allocations don't waste Karpenter capacity.
 
 ---
 

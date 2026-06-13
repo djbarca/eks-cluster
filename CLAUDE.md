@@ -93,3 +93,19 @@ Each `environments/<env>/<cluster>/` is an independent Terraform root with its o
 | `modules/platform` | `enable_fluentbit` | Fluent Bit → CloudWatch |
 | `modules/spark` | `enable_yunikorn` | YuniKorn gang scheduler |
 | `modules/spark` | `enable_history_server` | Spark History Server (also requires `history_server_bucket` + `history_server_bucket_arn` when enabled) |
+| `modules/spark` | `job_data_bucket_arns` | List of S3 bucket ARNs. When non-empty, creates an IAM role with R/W access bound to the `spark` SA via Pod Identity. Driver/executors get these creds automatically. |
+
+## Spark job examples
+
+`examples/spark-jobs/` contains working `SparkApplication` manifests:
+
+- `spark-sa.yaml` — one-time `spark` ServiceAccount + RBAC the operator needs
+- `pi-job.yaml` — SparkPi smoke test (no S3, validates operator + Karpenter)
+- `s3-wordcount-job.yaml` — validates Pod Identity → S3A read + event log write
+
+### Spark image gotchas
+
+- `apache/spark:3.5.3` does not ship `hadoop-aws` or `aws-java-sdk-bundle`. The example jobs and the History Server use an `initContainer` to download both jars into a shared `emptyDir` and pick them up via `SPARK_DIST_CLASSPATH` / `spark.{driver,executor}.extraClassPath`. Bake these jars into a custom image to avoid the per-pod download.
+- **`aws-java-sdk-bundle` must be ≥ 1.12.367** (this repo uses 1.12.788). Earlier versions reject EKS Pod Identity's `169.254.170.23` credential endpoint with `"Host can only be one of [localhost, 127.0.0.1]"`.
+- **S3A credential provider must be `org.apache.hadoop.fs.s3a.auth.IAMInstanceCredentialsProvider`** for Pod Identity. The default chain checks env vars first and fails before reaching the container creds.
+- **`spark.eventLog.dir` requires a path segment** (e.g. `s3a://bucket/logs`, not `s3a://bucket/`). S3A treats the bucket-only form as non-absolute and crashes during `SparkContext` init.
