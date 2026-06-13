@@ -60,3 +60,9 @@ variable "enable_yunikorn" {
   type        = bool
   default     = true
 }
+
+variable "job_data_bucket_arns" {
+  description = "ARNs of S3 buckets that Spark jobs can read/write. Used to scope an IAM role for the `spark` service account via Pod Identity. Empty list = no job IAM role created."
+  type        = list(string)
+  default     = []
+}

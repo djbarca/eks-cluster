@@ -17,6 +17,16 @@ resource "aws_eks_pod_identity_association" "spark_history_server" {
   role_arn        = aws_iam_role.spark_history_server[0].arn
 }
 
+# Pod Identity association for Spark driver/executor pods (the `spark` SA).
+# Created only when the caller provides job_data_bucket_arns.
+resource "aws_eks_pod_identity_association" "spark_job" {
+  count           = length(var.job_data_bucket_arns) > 0 ? 1 : 0
+  cluster_name    = var.cluster_name
+  namespace       = var.spark_namespace
+  service_account = "spark"
+  role_arn        = aws_iam_role.spark_job[0].arn
+}
+
 # Spark namespace with ResourceQuota to cap Karpenter provisioning.
 resource "kubectl_manifest" "spark_namespace" {
   yaml_body = yamlencode({

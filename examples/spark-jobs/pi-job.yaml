@@ -1,0 +1,42 @@
+# Compute Pi — the canonical Spark smoke test
+# No external data dependencies, so this runs without S3 setup.
+# After enabling: kubectl apply -f pi-job.yaml -n spark
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: spark-pi
+  namespace: spark
+spec:
+  type: Scala
+  mode: cluster
+  image: "apache/spark:3.5.3"
+  imagePullPolicy: IfNotPresent
+  mainClass: org.apache.spark.examples.SparkPi
+  mainApplicationFile: "local:///opt/spark/examples/jars/spark-examples_2.12-3.5.3.jar"
+  arguments:
+    - "1000"
+  sparkVersion: "3.5.3"
+  driver:
+    cores: 1
+    memory: "1g"
+    serviceAccount: spark
+    tolerations:
+      - key: role
+        operator: Equal
+        value: spark
+        effect: NoSchedule
+    nodeSelector:
+      role: spark
+  executor:
+    cores: 1
+    instances: 2
+    memory: "1g"
+    tolerations:
+      - key: role
+        operator: Equal
+        value: spark
+        effect: NoSchedule
+    nodeSelector:
+      role: spark
+  restartPolicy:
+    type: Never

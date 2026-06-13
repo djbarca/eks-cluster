@@ -1,0 +1,121 @@
+# S3 read/write SparkApplication
+#
+# Uses apache/spark:3.5.3 (which doesn't ship S3A jars) + an init container
+# that downloads hadoop-aws + aws-java-sdk-bundle into a shared emptyDir.
+# Spark picks them up via SPARK_DIST_CLASSPATH.
+#
+# Prerequisites:
+#   1. Upload input:
+#      echo -e "the quick brown fox\nthe lazy dog\nthe quick fox" > /tmp/words.txt
+#      aws s3 cp /tmp/words.txt s3://dev-data-platform-spark-test/input/words.txt
+#
+#   2. Submit:  kubectl apply -f s3-wordcount-job.yaml
+#   3. Watch:   kubectl get sparkapplication -n spark s3-wordcount -w
+#   4. Logs:    kubectl logs -n spark s3-wordcount-driver -f
+#   5. Output:  aws s3 ls s3://dev-data-platform-spark-test/output/wordcount/
+
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: s3-wordcount
+  namespace: spark
+spec:
+  type: Python
+  mode: cluster
+  image: "apache/spark:3.5.3"
+  imagePullPolicy: IfNotPresent
+  mainApplicationFile: "local:///opt/spark/examples/src/main/python/wordcount.py"
+  arguments:
+    - "s3a://dev-data-platform-spark-test/input/words.txt"
+  sparkVersion: "3.5.3"
+  sparkConf:
+    "spark.eventLog.enabled": "true"
+    "spark.eventLog.dir": "s3a://dev-data-platform-spark-history/logs"
+    # IAMInstanceCredentialsProvider walks Pod Identity / IMDS without
+    # requiring the aws-java-sdk DefaultAWSCredentialsProviderChain class.
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.auth.IAMInstanceCredentialsProvider"
+    "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    # Make Spark pick up the downloaded jars
+    "spark.driver.extraClassPath": "/opt/spark/extra-jars/*"
+    "spark.executor.extraClassPath": "/opt/spark/extra-jars/*"
+  driver:
+    cores: 1
+    memory: "1g"
+    serviceAccount: spark
+    nodeSelector:
+      role: spark
+    tolerations:
+      - key: role
+        operator: Equal
+        value: spark
+        effect: NoSchedule
+    volumeMounts:
+      - name: extra-jars
+        mountPath: /opt/spark/extra-jars
+    initContainers:
+      - name: fetch-s3a-jars
+        image: curlimages/curl:8.10.1
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -e
+            cd /jars
+            curl -sSL -o hadoop-aws-3.3.4.jar \
+              https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
+            # Pin to 1.12.788 — the v1 SDK relaxed AWS_CONTAINER_CREDENTIALS_FULL_URI
+            # host validation around 1.12.367. Earlier versions reject the
+            # 169.254.170.23 link-local IP that EKS Pod Identity uses.
+            curl -sSL -o aws-java-sdk-bundle-1.12.788.jar \
+              https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.788/aws-java-sdk-bundle-1.12.788.jar
+        volumeMounts:
+          - name: extra-jars
+            mountPath: /jars
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            memory: "256Mi"
+  executor:
+    cores: 1
+    instances: 2
+    memory: "1g"
+    nodeSelector:
+      role: spark
+    tolerations:
+      - key: role
+        operator: Equal
+        value: spark
+        effect: NoSchedule
+    volumeMounts:
+      - name: extra-jars
+        mountPath: /opt/spark/extra-jars
+    initContainers:
+      - name: fetch-s3a-jars
+        image: curlimages/curl:8.10.1
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -e
+            cd /jars
+            curl -sSL -o hadoop-aws-3.3.4.jar \
+              https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar
+            # Pin to 1.12.788 — the v1 SDK relaxed AWS_CONTAINER_CREDENTIALS_FULL_URI
+            # host validation around 1.12.367. Earlier versions reject the
+            # 169.254.170.23 link-local IP that EKS Pod Identity uses.
+            curl -sSL -o aws-java-sdk-bundle-1.12.788.jar \
+              https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.788/aws-java-sdk-bundle-1.12.788.jar
+        volumeMounts:
+          - name: extra-jars
+            mountPath: /jars
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            memory: "256Mi"
+  volumes:
+    - name: extra-jars
+      emptyDir: {}
+  restartPolicy:
+    type: Never

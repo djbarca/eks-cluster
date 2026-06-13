@@ -71,7 +71,7 @@ module "eks" {
       min_size       = 2
       max_size       = 4
       disk_size_gib  = 80
-      labels = { role = "system" }
+      labels         = { role = "system" }
     }
   }
 
@@ -85,8 +85,8 @@ module "eks" {
     kube-proxy = {
       before_compute = true
     }
-    coredns               = {}
-    metrics-server        = {}
+    coredns                   = {}
+    metrics-server            = {}
     eks-node-monitoring-agent = {}
     aws-ebs-csi-driver = {
       pod_identity    = true
@@ -175,6 +175,16 @@ module "spark" {
   cluster_name                       = module.eks.cluster_name
   cluster_endpoint                   = module.eks.cluster_endpoint
   cluster_certificate_authority_data = module.eks.cluster_certificate_authority_data
+
+  enable_history_server     = true
+  history_server_bucket     = "dev-data-platform-spark-history"
+  history_server_bucket_arn = "arn:aws:s3:::dev-data-platform-spark-history"
+  job_data_bucket_arns = [
+    "arn:aws:s3:::dev-data-platform-spark-test",
+    # Driver/executors write event logs here for the History Server to read
+    "arn:aws:s3:::dev-data-platform-spark-history",
+  ]
+
   tags = {
     Environment = "dev"
     Team        = "data-platform"
