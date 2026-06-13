@@ -29,3 +29,6 @@ TERRAFORM_DOCS.md
 .vscode/
 *.swp
 *.swo
+
+# Local-only session/scratch files
+claude-sesh
